@@ -124,8 +124,8 @@ renderPendingReward();
 
 // --- 3. ADSGRAM INTEGRATION ---
 const ADSGRAM_BLOCKS = {
-  reward: "reward-57692",
-  interstitial: "ads-int-57691"
+  reward: "57692",
+  interstitial: "int-57691"
 };
 const AD_COOLDOWN_MS = 10 * 60 * 1000;
 const AdControllers = window.Adsgram
@@ -261,7 +261,7 @@ const taskStatus = document.getElementById("task-status");
 if (tg?.initData && customElements.get("adsgram-task")) {
   const taskAd = document.createElement("adsgram-task");
   taskAd.id = "task-ad";
-  taskAd.dataset.blockId = "task-57550";
+  taskAd.dataset.blockId = "task-57693";
   taskAd.addEventListener("reward", () => {
     if (updateCoins(50)) {
       taskStatus.textContent = "Task সম্পন্ন! ৫০ কয়েন balance-এ যোগ হয়েছে।";
