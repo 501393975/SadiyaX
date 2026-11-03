@@ -112,25 +112,20 @@ function renderPendingReward() {
   const claimButton = document.getElementById("claim-reward");
   document.getElementById("pending-coins").textContent = String(pendingCoins);
   claimButton.hidden = pendingCoins === 0;
+  claimButton.disabled = claimInProgress;
   claimButton.textContent = `Claim game reward (${pendingCoins} coins)`;
 }
 
-document.getElementById("claim-reward").addEventListener("click", () => {
-  if (pendingCoins === 0 || !updateCoins(pendingCoins)) return;
-  pendingCoins = 0;
-  localStorage.setItem(pendingCoinsStorageKey, "0");
-  renderPendingReward();
-  document.getElementById("wallet-status").textContent = "গেমের কয়েন আপনার balance-এ যোগ হয়েছে।";
-  notifySuccess();
-});
+let claimInProgress = false;
+let rewardAdInProgress = false;
 
 renderCoinBalances();
 renderPendingReward();
 
 // --- 3. ADSGRAM INTEGRATION ---
 const ADSGRAM_BLOCKS = {
-  reward: "57548",
-  interstitial: "int-57549"
+  reward: "reward-57692",
+  interstitial: "ads-int-57691"
 };
 const AD_COOLDOWN_MS = 10 * 60 * 1000;
 const AdControllers = window.Adsgram
@@ -141,6 +136,58 @@ const AdControllers = window.Adsgram
       ])
     )
   : {};
+
+const interstitialStatus = document.getElementById("interstitial-status");
+if (AdControllers.interstitial) {
+  interstitialStatus.textContent = "Interstitial ad লোড হচ্ছে...";
+  AdControllers.interstitial.show()
+    .then(() => {
+      interstitialStatus.textContent = "";
+    })
+    .catch((err) => {
+      interstitialStatus.textContent = "এই মুহূর্তে interstitial ad পাওয়া যায়নি।";
+      console.error("Adsgram interstitial failed:", err);
+    });
+} else {
+  interstitialStatus.textContent = "Interstitial ad লোড হয়নি।";
+}
+
+document.getElementById("claim-reward").addEventListener("click", async () => {
+  if (pendingCoins === 0 || claimInProgress || rewardAdInProgress) return;
+  if (!AdControllers.reward) {
+    document.getElementById("wallet-status").textContent =
+      "Reward ad লোড হয়নি। ad ছাড়া game reward claim করা যাবে না।";
+    return;
+  }
+
+  claimInProgress = true;
+  rewardAdInProgress = true;
+  renderPendingReward();
+  document.getElementById("wallet-status").textContent = "Reward ad লোড হচ্ছে...";
+  try {
+    await AdControllers.reward.show();
+    if (!updateCoins(pendingCoins)) {
+      document.getElementById("wallet-status").textContent =
+        "কয়েন যোগ করা যায়নি। আপনার game reward অক্ষত আছে; আবার চেষ্টা করুন।";
+      return;
+    }
+
+    pendingCoins = 0;
+    localStorage.setItem(pendingCoinsStorageKey, "0");
+    renderPendingReward();
+    document.getElementById("wallet-status").textContent =
+      "বিজ্ঞাপন সম্পন্ন! গেমের কয়েন আপনার balance-এ যোগ হয়েছে।";
+    notifySuccess();
+  } catch (err) {
+    document.getElementById("wallet-status").textContent =
+      "Reward ad দেখানো যায়নি। আপনার game reward অক্ষত আছে; পরে আবার চেষ্টা করুন।";
+    console.error("Adsgram reward claim failed:", err);
+  } finally {
+    claimInProgress = false;
+    rewardAdInProgress = false;
+    renderPendingReward();
+  }
+});
 
 const adButton = document.getElementById("show-ad");
 const adCooldown = document.getElementById("ad-cooldown");
@@ -171,6 +218,10 @@ function renderAdCooldown() {
 
 renderAdCooldown();
 adButton.addEventListener("click", () => {
+  if (rewardAdInProgress) {
+    document.getElementById("ad-status").textContent = "অন্য একটি reward ad চলছে। শেষ হলে আবার চেষ্টা করুন।";
+    return;
+  }
   if (Date.now() < Number.parseInt(localStorage.getItem(adCooldownStorageKey) ?? "0", 10)) {
     renderAdCooldown();
     return;
@@ -180,6 +231,7 @@ adButton.addEventListener("click", () => {
     return;
   }
   adButton.disabled = true;
+  rewardAdInProgress = true;
   document.getElementById("ad-status").textContent = "বিজ্ঞাপন লোড হচ্ছে...";
   AdControllers.reward.show()
     .then(() => {
@@ -198,6 +250,7 @@ adButton.addEventListener("click", () => {
       console.error(err);
     })
     .finally(() => {
+      rewardAdInProgress = false;
       if (Date.now() >= Number.parseInt(localStorage.getItem(adCooldownStorageKey) ?? "0", 10)) {
         adButton.disabled = false;
       }
@@ -372,25 +425,6 @@ if (supabaseClient) {
     });
 }
 
-let completedRounds = 0;
-const INTERSTITIAL_EVERY_ROUNDS = 3;
-function finishGameRound() {
-  completedRounds++;
-  if (completedRounds < INTERSTITIAL_EVERY_ROUNDS) return;
-  completedRounds = 0;
-
-  const interstitialStatus = document.getElementById("interstitial-status");
-  if (!AdControllers.interstitial) {
-    interstitialStatus.textContent = "পরের গেমগুলো খেলার সময় interstitial ad দেখানো হবে।";
-    return;
-  }
-  interstitialStatus.textContent = "Interstitial ad লোড হচ্ছে...";
-  AdControllers.interstitial.show().catch((err) => {
-    interstitialStatus.textContent = "এই মুহূর্তে interstitial ad পাওয়া যায়নি।";
-    console.error("Adsgram interstitial failed:", err);
-  });
-}
-
 // --- 4. TAB NAVIGATION ---
 document.querySelectorAll(".bottom-nav-btn").forEach((button) => {
   button.addEventListener("click", () => {
@@ -530,7 +564,6 @@ function finishExtraGame(gameId, won, message) {
   const playAgain = makeGameButton("Play another round", "restart");
   playAgain.addEventListener("click", () => startExtraGame(gameId));
   state.controls.appendChild(playAgain);
-  finishGameRound();
 }
 
 function startExtraGame(gameId) {
@@ -770,13 +803,11 @@ function playerMove(i) {
     renderTTT();
     document.getElementById("ttt-status").innerText = "আপনি জিতেছেন! (+30 coins — claim করুন)";
     updatePendingCoins(30);
-    finishGameRound();
     return;
   }
   if (!tttBoard.includes("")) {
     renderTTT();
     document.getElementById("ttt-status").innerText = "ম্যাচ ড্র হয়েছে!";
-    finishGameRound();
     return;
   }
 
@@ -810,13 +841,11 @@ function aiMove() {
   if (checkWinner("O")) {
     renderTTT();
     document.getElementById("ttt-status").innerText = "AI জিতেছে! আবার চেষ্টা করুন।";
-    finishGameRound();
     return;
   }
   if (!tttBoard.includes("")) {
     renderTTT();
     document.getElementById("ttt-status").innerText = "ম্যাচ ড্র হয়েছে!";
-    finishGameRound();
     return;
   }
 
@@ -876,7 +905,6 @@ function flipCoin(choice) {
     document.getElementById("coin-status").innerText =
       `ফলাফল: ${result}! ভুল হয়েছে, আবার চেষ্টা করুন।`;
   }
-  finishGameRound();
 }
 
 // --- GAME 3: GUESS NUMBER ---
@@ -893,7 +921,6 @@ function checkGuess() {
     document.getElementById("guess-status").innerText =
       `সঠিক! সংখ্যাটি ছিল ${secretNum} (+30 coins — claim করুন)`;
     updatePendingCoins(30);
-    finishGameRound();
     secretNum = Math.floor(Math.random() * 10) + 1;
     input.value = "";
   } else if (val < secretNum) {
@@ -915,7 +942,6 @@ function rollDice() {
   } else {
     document.getElementById("dice-status").innerText = `উঠেছে: ${num}। ছক্কা এলে bonus পাবেন!`;
   }
-  finishGameRound();
 }
 
 // --- GAME 5: TAP RUSH ---
@@ -939,7 +965,6 @@ function handleTap() {
         updatePendingCoins(earned);
         document.getElementById("tap-status").innerText =
           `সময় শেষ! ${tapCount} বার tap করেছেন (+${earned} coins — claim করুন)`;
-        finishGameRound();
         setTimeout(() => {
           tapTimer = 5;
           tapCount = 0;
@@ -1025,7 +1050,6 @@ function flipMemoryCard(index) {
       document.getElementById("memory-status").textContent =
         "সব জোড়া মিলেছে! +60 coins — Claim করুন।";
       document.getElementById("memory-restart").textContent = "Play Again";
-      finishGameRound();
     }
     renderMemoryBoard();
     return;
@@ -1073,7 +1097,6 @@ function playRps(playerMove) {
 
   document.getElementById("rps-status").textContent =
     `${player.emoji} বনাম ${computer.emoji} — ${outcome}`;
-  finishGameRound();
 }
 
 // --- GAME 8: QUICK MATH ---
@@ -1137,7 +1160,6 @@ function submitMathAnswer() {
       `আপনার score: ${mathScore}/5`;
     document.getElementById("math-submit").hidden = true;
     document.getElementById("math-restart").hidden = false;
-    finishGameRound();
     return;
   }
 
